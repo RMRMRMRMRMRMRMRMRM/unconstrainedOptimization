@@ -8,10 +8,11 @@ def plot_convergence_rates(grad_norms, filename='convergence_rates.pdf'):
     grad_norms: 1D list or array of gradient norms for a single optimization path
     filename: output PDF filename
     """
-    rates = [grad_norms[k+1]/grad_norms[k] for k in range(len(grad_norms)-1)]
+    iterations = np.arange(1, len(grad_norms) + 1)
     
     plt.figure(figsize=(8,6))
-    plt.plot(rates, marker='o')
+    plt.plot(iterations, grad_norms, marker='o')
+    plt.xlim(1)
     plt.xlabel('Iteration')
     plt.ylabel('Rate')
     plt.yscale('log')

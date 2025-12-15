@@ -3,29 +3,36 @@ import math as m
 from scipy.sparse import csr_matrix
 
 
-def grad_test(x):
-    return np.array([-3 * m.sin(3*x[0]) + 2*x[0], 3 * m.cos(3*x[1]) + 2*x[1]])
-
-def hessian_test(x):
-    return np.array([[-9 * m.cos(3*x[0]) + 2, 0], [0, -9 * m.sin(3*x[1]) + 2]])
-
-def test_f(x):
-    return x[0]^2 + x[1]^2 + m.cos(3*x[0]) + m.sin(3*x[1])
-
-
-def banded_trig(x):
+def banded_trig(X):
     """
-    Compute the Banded Trigonometric function with i-multiplier:
-    F(x) = sum_{i=1}^n i * [(1 - cos(x_i)) + sin(x_{i-1}) - sin(x_{i+1})],
+    Vectorized Banded Trigonometric function with i-multiplier.
+    Works for single vector (n,) or multiple points (m, n).
+    F(x) = sum_i i * [(1 - cos(x_i)) + sin(x_{i-1}) - sin(x_{i+1})],
     with x_0 = x_{n+1} = 0
     """
-    n = len(x)
-    x = np.ravel(x)
-    x_ext = np.concatenate(([0], x, [0]))  # add boundaries
-    F = 0.0
-    for i in range(1, n + 1):
-        F += i * ((1 - np.cos(x_ext[i])) + np.sin(x_ext[i - 1]) - np.sin(x_ext[i + 1]))
-    return F
+    X = np.atleast_2d(X)       # ensure 2D: (m, n)
+    m, n = X.shape
+
+    # add boundary zeros
+    X_ext = np.hstack([np.zeros((m,1)), X, np.zeros((m,1))])
+
+    # slices for xi, xi-1, xi+1
+    xi    = X_ext[:, 1:n+1]
+    xi_m1 = X_ext[:, 0:n]
+    xi_p1 = X_ext[:, 2:n+2]
+
+    # multipliers
+    i_vec = np.arange(1, n+1)  # shape (n,)
+    
+    # compute all terms at once
+    terms = i_vec * ((1 - np.cos(xi)) + np.sin(xi_m1) - np.sin(xi_p1))  # shape (m, n)
+
+    # sum over columns (dimensions) to get scalar per row
+    F = np.sum(terms, axis=1)
+
+    # return scalar if single input
+    return F[0] if F.size == 1 else F
+
 
 def grad_banded_trig(x):
     """
@@ -36,14 +43,11 @@ def grad_banded_trig(x):
     grad = np.zeros(n)
 
     for j in range(0, n):
-        if j == 0:
-            grad[j] = (j + 1) * m.sin(x[j]) + (j + 2) * m.cos(x[j])
-
-        elif j == n - 1:
-            grad[j] = (j + 1) * m.sin(x[j]) - (j - 2) * m.cos(x[j])
+        if j == n - 1:
+            grad[j] = (j + 1) * m.sin(x[j]) - j * m.cos(x[j])
 
         else:
-            grad[j] = (j + 1) * m.sin(x[j]) + (j + 2) * m.cos(x[j]) - (j - 2) * m.cos(x[j])
+            grad[j] = (j + 1) * m.sin(x[j]) + 2 * m.cos(x[j])
     return grad
 
 def grad_banded_trig_test(x):
@@ -58,15 +62,25 @@ def hess_banded_trig(x):
     """
     n = len(x)
     H = np.zeros((n, n))
-    for j in range(n):
-        if j == 0:
-            H[j, j] = (j + 1) * m.cos(x[j]) - (j + 2) * m.sin(x[j])
-
-        elif j == n - 1:
-            H[j, j] = (j + 1) * m.cos(x[j]) - (j - 2) * m.sin(x[j])
+    for j in range(0, n):
+        if j == n - 1:
+            H[j, j] = (j + 1) * m.cos(x[j]) + j * m.sin(x[j])
 
         else:
             H[j, j] = (j + 1) * m.cos(x[j]) - 2 * m.sin(x[j])
+
+    H_sparse = csr_matrix(H)
+    return H_sparse
+
+def hess_banded_trig_test(x):
+    """
+    Hessian (banded, tridiagonal structure):
+        H[j,j]   = (j+1) * cos(x_j)
+        H[j,j-1] = -(j) * sin(x_{j-1})
+        H[j,j+1] = (j+2) * sin(x_{j+1})
+    """
+    n = len(x)
+    H = np.array([[m.cos(x[0]) - 2 * m.sin(x[0]), 0], [0, 2 * m.cos(x[1]) + m.sin(x[1])]])
 
     H_sparse = csr_matrix(H)
     return H_sparse

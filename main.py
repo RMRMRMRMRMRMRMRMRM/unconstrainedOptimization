@@ -2,7 +2,7 @@ import functions as fn
 import plot
 import algorithms as alg
 
-result = alg.modified_newton(fn.banded_trig, fn.grad_banded_trig_test, fn.hess_banded_trig, [1, 1])
+result = alg.modified_newton(fn.banded_trig, fn.grad_banded_trig, fn.hess_banded_trig, [1, 1], finite_diff=False)
 
 print(140*"-")
 print("RESULTS")
