@@ -71,16 +71,3 @@ def hess_banded_trig(x):
 
     H_sparse = csr_matrix(H)
     return H_sparse
-
-def hess_banded_trig_test(x):
-    """
-    Hessian (banded, tridiagonal structure):
-        H[j,j]   = (j+1) * cos(x_j)
-        H[j,j-1] = -(j) * sin(x_{j-1})
-        H[j,j+1] = (j+2) * sin(x_{j+1})
-    """
-    n = len(x)
-    H = np.array([[m.cos(x[0]) - 2 * m.sin(x[0]), 0], [0, 2 * m.cos(x[1]) + m.sin(x[1])]])
-
-    H_sparse = csr_matrix(H)
-    return H_sparse

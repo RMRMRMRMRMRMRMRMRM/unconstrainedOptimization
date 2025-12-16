@@ -3,48 +3,51 @@ import math as m
 from typing import Callable
 from scipy.sparse.linalg import spsolve
 import functions as fn
+import scipy.sparse as sp
 
-def modified_newton(f, grad_f, hess_f, x0, finite_diff=True, tol=1e-6, max_iter=10000, tau_init=1e-4, rho=0.5, c=1e-4):
+def modified_newton(f, grad_f, hess_f, x0, finite_diff=True, k=4, tol=1e-6, max_iter=10000, tau_init=1e-4, rho=0.5, c=1e-4):
     """
     Modified Newton method with backtracking line search.
     
     Parameters:
-        f       : function returning scalar value (objective function)
-        grad_f  : function returning gradient vector at x
-        hess_f  : function returning Hessian matrix at x
-        x0      : initial guess (numpy array)
-        tol     : tolerance for stopping (gradient norm)
-        max_iter: maximum number of iterations
-        tau_init: initial Hessian modification parameter
-        rho     : backtracking reduction factor (0 < rho < 1)
-        c       : Armijo condition constant (0 < c < 1)
+        f           : function returning scalar value (objective function)
+        grad_f      : function returning gradient vector at x
+        hess_f      : function returning Hessian matrix at x
+        x0          : initial guess (numpy array)
+        finite_diff : switch for using finite difference (boolean)
+        k           : h = 10^-k
+        tol         : tolerance for stopping (gradient norm)
+        max_iter    : maximum number of iterations
+        tau_init    : initial Hessian modification parameter
+        rho         : backtracking reduction factor (0 < rho < 1)
+        c           : Armijo condition constant (0 < c < 1)
         
     Returns:
         x       : approximate minimizer
         f(x)    : function value at x
-        k       : number of iterations performed
+        i       : number of iterations performed
         grad_norm : norm of gradient at final x
     """
-    
     x = x0.copy()
     points = [x]
     norms = []
     num_iters = 0
+    success = False
+    flag = "-"
 
-    for k in range(max_iter):
+    for i in range(max_iter):
         if finite_diff:
-            g = finite_diff_grad_central(f, x)
-            H = finite_diff_hessian_diag_from_grad(f, fn.grad_banded_trig, finite_diff_grad_central, x)
-            print(f"diagonal: {H.diagonal()}")
+            g = finite_diff_grad_central(f, x, k)
+            H = finite_diff_hessian_diag_from_grad(f, fn.grad_banded_trig, finite_diff_grad_central, x, k)
 
         else:
             g = grad_f(x)
             H = hess_f(x)
-            print(f"diagonal: {H.diagonal()}")
         
         grad_norm = np.linalg.norm(g) # Frobenius norm
         norms.append(grad_norm)
         if grad_norm < tol:
+            success = True
             break  # Stop if gradient is small enough
 
         num_iters += 1
@@ -70,19 +73,29 @@ def modified_newton(f, grad_f, hess_f, x0, finite_diff=True, tol=1e-6, max_iter=
         x = armijo_condition(f, x, p, g, alpha, rho, c, mxitr)
         x = np.ravel(x)
 
-        if num_iters < 50:
-            print(140*"-")
-            print(f"Iteration number {num_iters}")            
-            print(f"point: {x}")
-            print(f"gradient: {g}")
-            print(f"grad norm {grad_norm}")
-            print(f"Function value: {f(x)}")
-
         points.append(x)
 
+    if not success:
+         flag = "max-iterations-hit"
     points = np.array(points)
 
-    return {"minimum_pt": x, "minimum": f(x), "num_iter": num_iters, "grad_norms": norms, "visited_pt": points}
+    if len(norms) > 2:
+            ratios = [norms[i+1]/norms[i] for i in range(len(norms)-1) if norms[i] > 0]
+            rate = np.mean(ratios[-5:])  # average of last few ratios #TODO look for certain how its supposed to look
+    else:
+        rate = np.nan
+    
+    return {
+        "minimum_pt": x,
+        "minimum": f(x),
+        "num_iter": i + 1,
+        "grad_norm": grad_norm,
+        "success": success,
+        "flag": flag,
+        "rate": rate,
+        "visited_pt": np.array(points),
+        "grad_norms": np.array(norms),
+    }
 
 def armijo_condition(f:     Callable[[np.ndarray], float],
                      x:     np.array, 
@@ -124,8 +137,6 @@ def armijo_condition(f:     Callable[[np.ndarray], float],
             alpha *= rho
             itr += 1
 
-    print(f"alpha: {alpha}")
-    print(f"direction {p}")
     return (x + alpha * p).flatten()
 
 def finite_diff_grad_central(f, x, k=4, relative=True):
@@ -168,9 +179,6 @@ def finite_diff_grad_central(f, x, k=4, relative=True):
     # central difference
     grad = (f_plus - f_minus) / (2 * h_vec)
     return grad
-
-import numpy as np
-import scipy.sparse as sp
 
 def finite_diff_hessian_diag_from_grad(f, grad_exact, grad_fd,
                                        x, k=8, relative=True,
