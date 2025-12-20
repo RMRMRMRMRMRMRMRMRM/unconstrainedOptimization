@@ -97,6 +97,136 @@ def modified_newton(f, grad_f, hess_f, x0, finite_diff=True, k=4, tol=1e-6, max_
         "grad_norms": np.array(norms),
     }
 
+
+
+def newton_conjugate_gradient(
+    f, grad_f, hess_f, x0, finite_diff=True, k=4,
+    tol=1e-6, max_iter=10000, tau_init=1e-4,
+    rho=0.5, c=1e-4, cg_tol=1e-4, cg_max_iter=None
+):
+    """
+    Newton–Conjugate Gradient (Newton–CG) method with backtracking line search.
+
+    Parameters:
+        f           : function returning scalar value (objective function)
+        grad_f      : function returning gradient vector at x
+        hess_f      : function returning Hessian (sparse matrix) at x
+        x0          : initial guess (numpy array)
+        finite_diff : switch for using finite difference (boolean)
+        k           : h = 10^-k (finite difference step)
+        tol         : tolerance for stopping (gradient norm)
+        max_iter    : maximum number of iterations
+        tau_init    : unused here (kept for signature consistency)
+        rho         : backtracking reduction factor (0 < rho < 1)
+        c           : Armijo condition constant (0 < c < 1)
+        cg_tol      : tolerance for inner CG loop
+        cg_max_iter : maximum CG iterations (defaults to len(x))
+
+    Returns:
+        dict with same keys as modified_newton:
+            "minimum_pt", "minimum", "num_iter", "grad_norm",
+            "success", "flag", "rate", "visited_pt", "grad_norms"
+    """
+
+    x = x0.copy()
+    points = [x]
+    norms = []
+    success = False
+    flag = "-"
+    num_iters = 0
+
+    for i in range(max_iter):
+
+        # Compute gradient and Hessian
+        if finite_diff:
+            g = finite_diff_grad_central(f, x, k)
+            H = finite_diff_hessian_diag_from_grad(
+                f, fn.grad_banded_trig, finite_diff_grad_central, x, k
+            )
+        else:
+            g = grad_f(x)
+            H = hess_f(x)
+
+        grad_norm = np.linalg.norm(g)
+        norms.append(grad_norm)
+        if grad_norm < tol:
+            success = True
+            break
+
+        num_iters += 1
+
+        n = len(x)
+        if cg_max_iter is None:
+            cg_max_iter = n
+
+        # --- Begin Conjugate Gradient solver for H p = -g ---
+        p = np.zeros_like(g)
+        r = g.copy()            # residual = H*p + g
+        d = -r.copy()
+        delta_new = r @ r
+        found_neg_curv = False
+
+        for j in range(cg_max_iter):
+            Hd = H @ d                  # sparse-safe product
+            dHd = d @ Hd                # curvature along d
+
+            if dHd <= 0:
+                # negative curvature detected
+                if j == 0:
+                    p = -g              # fallback: steepest descent
+                else:
+                    p = p
+                break
+
+            alpha_cg = delta_new / dHd
+            p = p + alpha_cg * d
+            r = r + alpha_cg * Hd
+
+            if np.linalg.norm(r) < cg_tol * np.linalg.norm(g):
+                break
+
+            delta_old = delta_new
+            delta_new = r @ r
+            beta_cg = delta_new / delta_old
+            d = -r + beta_cg * d #TODO why minus
+
+        # --- Backtracking line search (Armijo condition) ---
+        alpha = 1.0
+        mxitr = 5
+        f_x = f(x)
+        while mxitr > 0 and f(x + alpha * p) > f_x + c * alpha * (g @ p):
+            alpha *= rho
+            mxitr -= 1
+
+        # Update position
+        x = x + alpha * p
+        points.append(x)
+
+    if not success and flag == "-":
+        flag = "max-iterations-hit"
+
+    points = np.array(points)
+
+    # Estimate rate of convergence (same as modified_newton)
+    if len(norms) > 2:
+        ratios = [norms[i+1]/norms[i] for i in range(len(norms)-1) if norms[i] > 0]
+        rate = np.mean(ratios[-5:]) if len(ratios) >= 5 else np.mean(ratios)
+    else:
+        rate = np.nan
+
+    return {
+        "minimum_pt": x,
+        "minimum": f(x),
+        "num_iter": num_iters,
+        "grad_norm": grad_norm,
+        "success": success,
+        "flag": flag,
+        "rate": rate,
+        "visited_pt": np.array(points),
+        "grad_norms": np.array(norms),
+    }
+    
+
 def armijo_condition(f:     Callable[[np.ndarray], float],
                      x:     np.array, 
                      p:     np.array, 
