@@ -4,6 +4,7 @@ from typing import Callable
 from scipy.sparse.linalg import spsolve
 import functions as fn
 import scipy.sparse as sp
+import time
 
 def modified_newton(f, grad_f, hess_f, x0, finite_diff=True, k=4, tol=1e-6, max_iter=10000, tau_init=1e-4, rho=0.5, c=1e-4):
     """
@@ -35,6 +36,12 @@ def modified_newton(f, grad_f, hess_f, x0, finite_diff=True, k=4, tol=1e-6, max_
     success = False
     flag = "-"
 
+    before_MN = []
+    time_MN = []
+    time_backtracking = []
+
+    start_time = time.perf_counter()
+
     for i in range(max_iter):
         if finite_diff:
             g = finite_diff_grad_central(f, x, k)
@@ -64,14 +71,20 @@ def modified_newton(f, grad_f, hess_f, x0, finite_diff=True, k=4, tol=1e-6, max_
                 H.setdiag(H.diagonal() + tau) # Update Hessian
 
 
+        before_MN.append(start_time - time.perf_counter())
 
+        start_time = time.perf_counter()
         # Solve H_mod * p = -g for p
         p = -spsolve(H, g)
+        time_MN.append(start_time - time.perf_counter())
+
+        start_time = time.perf_counter()
 
         alpha = 1.0  # Start with full step
         mxitr = 5   # Set mx iterations for armijo condition
-        x = armijo_condition(f, x, p, g, alpha, rho, c, mxitr)
+        x = line_search_armijo_wolfe(f, grad_f, x, p, g, alpha, rho, c, c2=0.7, wolfe = True)
         x = np.ravel(x)
+        time_backtracking.append(start_time - time.perf_counter())
 
         points.append(x)
 
@@ -84,6 +97,11 @@ def modified_newton(f, grad_f, hess_f, x0, finite_diff=True, k=4, tol=1e-6, max_
             rate = np.mean(ratios[-5:])  # average of last few ratios #TODO look for certain how its supposed to look
     else:
         rate = np.nan
+
+    print(f"Average time before linear system: {np.mean(before_MN)}")
+    print(f"Average time linesr system: {np.mean(time_MN)}")
+    print(f"Average time bactracking: {np.mean(time_backtracking)}")
+
     
     return {
         "minimum_pt": x,
@@ -135,6 +153,11 @@ def newton_conjugate_gradient(
     flag = "-"
     num_iters = 0
 
+    before_CG = []
+    time_CG = []
+    time_backtracking = []
+    start_time = time.perf_counter()
+
     for i in range(max_iter):
 
         # Compute gradient and Hessian
@@ -159,12 +182,14 @@ def newton_conjugate_gradient(
         if cg_max_iter is None:
             cg_max_iter = n
 
+        before_CG.append(start_time - time.perf_counter())
+
+        start_time = time.perf_counter()
         # --- Begin Conjugate Gradient solver for H p = -g ---
         p = np.zeros_like(g)
         r = g.copy()            # residual = H*p + g
         d = -r.copy()
         delta_new = r @ r
-        found_neg_curv = False
 
         for j in range(cg_max_iter):
             Hd = H @ d                  # sparse-safe product
@@ -190,16 +215,16 @@ def newton_conjugate_gradient(
             beta_cg = delta_new / delta_old
             d = -r + beta_cg * d #TODO why minus
 
+        time_CG.append(start_time - time.perf_counter())
+
         # --- Backtracking line search (Armijo condition) ---
+        start_time = time.perf_counter()
         alpha = 1.0
         mxitr = 5
-        f_x = f(x)
-        while mxitr > 0 and f(x + alpha * p) > f_x + c * alpha * (g @ p):
-            alpha *= rho
-            mxitr -= 1
+        x = line_search_armijo_wolfe(f, grad_f, x, p, g, alpha, rho, c, mxitr, wolfe = True)
+        x = np.ravel(x)
+        time_backtracking.append(start_time - time.perf_counter())
 
-        # Update position
-        x = x + alpha * p
         points.append(x)
 
     if not success and flag == "-":
@@ -214,6 +239,11 @@ def newton_conjugate_gradient(
     else:
         rate = np.nan
 
+    print(f"Average time before CG: {np.mean(before_CG)}")
+    print(f"Average time CG: {np.mean(time_CG)}")
+    print(f"Average time bactracking: {np.mean(time_backtracking)}")
+
+
     return {
         "minimum_pt": x,
         "minimum": f(x),
@@ -227,21 +257,28 @@ def newton_conjugate_gradient(
     }
     
 
-def armijo_condition(f:     Callable[[np.ndarray], float],
-                     x:     np.array, 
-                     p:     np.array, 
-                     grad:  np.array, 
-                     alpha: float, 
-                     rho:   float, 
-                     c:     float,
-                     mxitr: int):
+
+def line_search_armijo_wolfe(f: Callable[[np.ndarray], float],
+                             grad_f: Callable[[np.ndarray], np.ndarray],
+                             x: np.ndarray,
+                             p: np.ndarray,
+                             grad: np.ndarray,
+                             alpha: float = 1.0,
+                             rho: float = 0.5,
+                             c1: float = 1e-4,
+                             c2: float = 0.9,
+                             mxitr: int = 20,
+                             wolfe: bool = False):
     """
-    Perform a backtracking line search satisfying the Armijo condition.
+    Backtracking / bracketing line search satisfying the Armijo condition,
+    optionally enforcing the Wolfe curvature condition.
 
     Parameters
     ----------
     f : callable
-        Objective function that takes a NumPy array and returns a scalar.
+        Objective function returning a scalar.
+    grad_f : callable
+        Function returning gradient at x.
     x : np.ndarray
         Current point.
     p : np.ndarray
@@ -251,21 +288,59 @@ def armijo_condition(f:     Callable[[np.ndarray], float],
     alpha : float, optional
         Initial step size (default: 1.0).
     rho : float, optional
-        Shrinkage factor in (0, 1) (default: 0.5).
-    c : float, optional
+        Shrinkage factor for initial scaling (default: 0.5).
+    c1 : float, optional
         Armijo parameter (default: 1e-4).
+    c2 : float, optional
+        Wolfe curvature parameter (default: 0.9).
+    mxitr : int, optional
+        Maximum number of function evaluations.
+    wolfe : bool, optional
+        If True, also enforce the Wolfe curvature condition.
 
     Returns
     -------
     x_new : np.ndarray
-        Updated point after step satisfying the Armijo condition.
+        Updated point satisfying the chosen conditions.
     """
+
     fx = f(x)
-    p = np.ravel(p)
+    phi0_prime = np.dot(grad, p)
+    alpha_low, alpha_high = 0, None  # bracket endpoints
     itr = 0
-    while f(x + alpha * p) > fx + c * alpha * np.dot(grad, p) and itr < mxitr:
-            alpha *= rho
-            itr += 1
+
+    while itr < mxitr:
+        fx_new = f(x + alpha * p)
+
+        # Armijo condition
+        if fx_new > fx + c1 * alpha * phi0_prime or \
+           (alpha_high is not None and fx_new >= f(x + alpha_low * p)):
+            alpha_high = alpha
+        else:
+            # Check curvature condition if requested
+            if wolfe:
+                g_new = grad_f(x + alpha * p)
+                phi_prime = np.dot(g_new, p)
+                if phi_prime < c2 * phi0_prime:
+                    # slope still too negative: increase alpha
+                    alpha_low = alpha
+                elif phi_prime > -c2 * phi0_prime:
+                    # strong Wolfe variant; slope reversed sign too much
+                    alpha_high = alpha
+                else:
+                    # Wolfe satisfied
+                    break
+            else:
+                # Armijo satisfied and no Wolfe required
+                break
+
+        # Update alpha
+        if alpha_high is None:
+            alpha *= 2.0  # expand until upper bound found
+        else:
+            alpha = 0.5 * (alpha_low + alpha_high)
+
+        itr += 1
 
     return (x + alpha * p).flatten()
 

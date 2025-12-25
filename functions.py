@@ -1,6 +1,6 @@
 import numpy as np
 import math as m
-from scipy.sparse import csr_matrix
+from scipy.sparse import diags
 
 
 def banded_trig(X):
@@ -61,13 +61,13 @@ def hess_banded_trig(x):
         H[j,j+1] = (j+2) * sin(x_{j+1})
     """
     n = len(x)
-    H = np.zeros((n, n))
+    H = np.zeros(n)
     for j in range(0, n):
         if j == n - 1:
-            H[j, j] = (j + 1) * m.cos(x[j]) + j * m.sin(x[j])
+            H[j] = (j + 1) * m.cos(x[j]) + j * m.sin(x[j])
 
         else:
-            H[j, j] = (j + 1) * m.cos(x[j]) - 2 * m.sin(x[j])
+            H[j] = (j + 1) * m.cos(x[j]) - 2 * m.sin(x[j])
 
-    H_sparse = csr_matrix(H)
+    H_sparse = diags(H, offsets=0, format="csr")
     return H_sparse
