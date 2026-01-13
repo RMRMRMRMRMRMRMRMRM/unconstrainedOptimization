@@ -52,10 +52,11 @@ def plot_convergence_rates_nord(runs_dict, filename="convergence_rates.pdf"):
     plt.close()
 
 
-def plot_paths_2d_nord(F, runs_dict, filename="paths.pdf",
-                       x_range=(-3, 3), y_range=(-3, 3), levels=200):
+def plot_paths_2d_nord(F, runs_dict, filename="paths_grid.pdf",
+                       x_range=(-10, 10), y_range=(-10, 10), levels=50):
     """
-    Plot filled contour of F(x) with multiple optimization paths (colored by Nord palette).
+    Plot filled contour of F(x) with one subplot per run.
+    Each subplot shows the viridis heatmap and black points for that run's path.
 
     Parameters
     ----------
@@ -65,55 +66,56 @@ def plot_paths_2d_nord(F, runs_dict, filename="paths.pdf",
         Dictionary of { 'Run Name': [path_array], ... }.
         Each path_array should be an array of shape (n_iters, 2).
     filename : str
-        PDF output filename.
+        Output filename for the multi-plot PDF.
     """
 
-    nord_colors = [
-        "#607879", "#633874", "#4888C7", "#7BC778",
-        "#D64F4F", "#D46ABD", "#EBCB8B", "#A3BE8C"
-    ]
-
-    # Meshgrid for contour
-    X, Y = np.meshgrid(np.linspace(x_range[0], x_range[1], 400),
-                       np.linspace(y_range[0], y_range[1], 400))
+    # Meshgrid for contour background
+    X, Y = np.meshgrid(np.linspace(x_range[0], x_range[1], 100),
+                       np.linspace(y_range[0], y_range[1], 100))
     Z = np.zeros_like(X)
-
-    # Vectorized evaluation for speed
     for i in range(X.shape[0]):
         for j in range(X.shape[1]):
             Z[i, j] = F(np.array([X[i, j], Y[i, j]]))
 
-    # Base figure
-    fig, ax = plt.subplots(figsize=(7, 6))
-    contour = ax.contourf(X, Y, Z, levels=levels, cmap="Wistia", alpha=0.50)
-    cbar = plt.colorbar(contour, ax=ax, pad=0.02)
-    cbar.set_label("F(x)", rotation=270, labelpad=12)
+    # Setup subplot grid
+    n = len(runs_dict)
+    ncols = int(np.ceil(np.sqrt(n)))
+    nrows = int(np.ceil(n / ncols))
 
-    # Plot optimization paths
-    for i, (name, path) in enumerate(runs_dict.items()):
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 4 * nrows))
+    axes = np.array(axes).reshape(-1)  # Flatten for easy indexing
+
+    for ax, (name, path) in zip(axes, runs_dict.items()):
         path = np.atleast_2d(np.array(path))
+        print(path)
         if path.shape[1] < 2:
             raise ValueError(f"Path '{name}' has fewer than 2 variables; cannot plot in 2D")
 
-        color = nord_colors[i % len(nord_colors)]
-        # ax.plot(path[:, 0], path[:, 1], color=color, lw=1.3, label=name, alpha=0.9)
-        ax.scatter(path[:, 0], path[:, 1], color=color, s=30, zorder=3, label=name)
+        # Contour background
+        contour = ax.contourf(X, Y, Z, levels=levels, cmap="viridis", alpha=0.7)
 
-    # Axis labels & style
-    ax.set_xlabel("x₁", fontsize=11)
-    ax.set_ylabel("x₂", fontsize=11)
-    ax.set_xlim(x_range)
-    ax.set_ylim(y_range)
+        # Plot black points for this path
+        ax.scatter(path[:, 0], path[:, 1], color="black", s=25, zorder=3)
 
-    ax.legend(frameon=False, fontsize=9, loc="best")
-    ax.set_facecolor("#ECEFF4")
-    fig.patch.set_facecolor("#ECEFF4")
+        ax.set_xlim(x_range)
+        ax.set_ylim(y_range)
+        ax.set_xlabel("x₁", fontsize=10)
+        ax.set_ylabel("x₂", fontsize=10)
+        ax.set_title(name, fontsize=11)
+        ax.set_facecolor("#ECEFF4")
+
+    # Turn off any extra axes if number of runs < nrows*ncols
+    for ax in axes[len(runs_dict):]:
+        ax.axis("off")
+
+    fig.tight_layout(rect=[0, 0.05, 1, 0.95])  # Leave space at the bottom
+    cbar_ax = fig.add_axes([0.25, 0, 0.5, 0.02])  # [left, bottom, width, height]
+    cbar = fig.colorbar(contour, cax=cbar_ax, orientation='horizontal')
+    cbar.set_label("F(x)", labelpad=6)
 
     plt.tight_layout()
     plt.savefig(filename, bbox_inches="tight")
     plt.close()
-
-    
 
 def generate_pdf_tables_from_csvs(results_folder="results"):
     """
